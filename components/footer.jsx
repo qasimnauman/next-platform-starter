@@ -8,6 +8,7 @@ export function Footer() {
                     Next.js on Netlify
                 </Link>
             </p>
+            <p>Updated for testing</p>
         </footer>
     );
 };
