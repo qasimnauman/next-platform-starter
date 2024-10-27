@@ -69,4 +69,4 @@ jobs:
             npm install
             pkill -f "next start" || true  # Stop any existing Next.js app
             nohup npm start &  # Start the Next.js app in the background
-            EOF
+          EOF
