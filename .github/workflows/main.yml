@@ -36,16 +36,17 @@ jobs:
           HOST: ${{ secrets.EC2_HOST }}
           USER: ${{ secrets.EC2_USER }}
         run: |
-         # Configure SSH for the EC2 instance
+         # Configure SSH
           mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa  # Remove carriage returns for formatting
-          chmod 400 ~/.ssh/id_rsa
-
-          # Add host to known_hosts to prevent prompts
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
 
-          # Test SSH connection with verbose output
-          ssh -v -o StrictHostKeyChecking=no $USER@$HOST "echo 'SSH connection successful'"
+          # Transfer files using 'scp' to the EC2 instance's /tmp directory
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r ./nextjs-app $USER@$HOST:/tmp/
+
+          # Move files from /tmp to the target directory with 'sudo'
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST "sudo mkdir -p /var/www/nextjs-app && sudo mv /tmp/nextjs-app/* /var/www/nextjs-app/"
 
           # Create target directory if it doesn't exist
           ssh -o StrictHostKeyChecking=no $USER@$HOST "sudo mkdir -p /var/www/nextjs-app && sudo chown -R $USER:$USER /var/www/nextjs-app"
