@@ -44,9 +44,11 @@ jobs:
 
           # Prepare application directory on EC2
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
+            sudo apt update
             sudo mkdir -p /var/www/nextjs-app
             sudo chown -R $USER:$USER /var/www/nextjs-app
             sudo chmod -R 755 /var/www/nextjs-app
+            sudo apt update
           EOF
 
           # Copy build files to EC2's /tmp directory
