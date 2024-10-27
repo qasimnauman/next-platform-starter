@@ -39,7 +39,7 @@ jobs:
           # Configure SSH for the EC2 instance
           mkdir -p ~/.ssh
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          chmod 400 ~/.ssh/id_rsa
 
           # Create target directory if it doesn't exist
           ssh -o StrictHostKeyChecking=no $USER@$HOST "sudo mkdir -p /var/www/nextjs-app && sudo chown -R $USER:$USER /var/www/nextjs-app"
