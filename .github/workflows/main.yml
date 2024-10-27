@@ -36,28 +36,28 @@ jobs:
           HOST: ${{ secrets.EC2_HOST }}
           USER: ${{ secrets.EC2_USER }}
         run: |
-         # Configure SSH
+          # Configure SSH
           mkdir -p ~/.ssh
           echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
 
-          # Transfer files using 'scp' to the EC2 instance's /tmp directory
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r ./nextjs-app $USER@$HOST:/tmp/
-
-          # Move files from /tmp to the target directory with 'sudo'
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST "sudo mkdir -p /var/www/nextjs-app && sudo mv /tmp/nextjs-app/* /var/www/nextjs-app/"
-
-          # Create target directory if it doesn't exist
-          ssh -o StrictHostKeyChecking=no $USER@$HOST "sudo mkdir -p /var/www/nextjs-app && sudo chown -R $USER:$USER /var/www/nextjs-app"
-
-          # Copy built files to EC2
-          sudo scp -o StrictHostKeyChecking=no -r .next $USER@$HOST:/var/www/nextjs-app
-
-          # SSH into EC2 to start/restart the application
-          ssh -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
-            sudo cd /var/www/nextjs-app
-            sudo npm install  # Install any server-side dependencies
-            sudo pm2 restart app || sudo pm2 start npm --name "app" -- start  # Start or restart with PM2
+          # Prepare application directory on EC2
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
+            sudo mkdir -p /var/www/nextjs-app
+            sudo chown -R $USER:$USER /var/www/nextjs-app
+            sudo chmod -R 755 /var/www/nextjs-app
           EOF
 
+          # Copy build files to EC2's /tmp directory
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r .next $USER@$HOST:/tmp/nextjs-build
+
+          # Move build files from /tmp to the target directory and restart the app
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
+            sudo mv /tmp/nextjs-build/* /var/www/nextjs-app/
+            cd /var/www/nextjs-app
+
+            # Install dependencies and start or restart the app with PM2
+            npm install
+            pm2 restart app || pm2 start npm --name "app" -- start
+          EOF
