@@ -42,15 +42,15 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
 
           # Create target directory if it doesn't exist
-          ssh -o StrictHostKeyChecking=no $USER@$HOST "mkdir -p /var/www/nextjs-app"
+          ssh -o StrictHostKeyChecking=no $USER@$HOST "sudo mkdir -p /var/www/nextjs-app && sudo chown -R $USER:$USER /var/www/nextjs-app"
 
           # Copy built files to EC2
-          scp -o StrictHostKeyChecking=no -r .next $USER@$HOST:/var/www/nextjs-app
+          sudo scp -o StrictHostKeyChecking=no -r .next $USER@$HOST:/var/www/nextjs-app
 
           # SSH into EC2 to start/restart the application
           ssh -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
-            cd /var/www/nextjs-app
-            npm install  # Install any server-side dependencies
-            pm2 restart app || pm2 start npm --name "app" -- start  # Start or restart with PM2
+            sudo cd /var/www/nextjs-app
+            sudo npm install  # Install any server-side dependencies
+            sudo pm2 restart app || sudo pm2 start npm --name "app" -- start  # Start or restart with PM2
           EOF
 
