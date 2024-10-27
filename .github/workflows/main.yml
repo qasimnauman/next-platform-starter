@@ -24,12 +24,6 @@ jobs:
       - name: Build Next.js application
         run: npm run build
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: nextjs-build
-          path: .next  # Adjust path if using custom output directories
-
       - name: Deploy to EC2
         env:
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
@@ -48,7 +42,6 @@ jobs:
             sudo mkdir -p /var/www/nextjs-app
             sudo chown -R $USER:$USER /var/www/nextjs-app
             sudo chmod -R 755 /var/www/nextjs-app
-            sudo apt update
           EOF
 
           # Copy build files to EC2's /tmp directory
@@ -56,10 +49,24 @@ jobs:
 
           # Move build files from /tmp to the target directory and restart the app
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
-            sudo mv /tmp/nextjs-build/* /var/www/nextjs-app/
+            # Check if the build directory exists
+            if [ -d /tmp/nextjs-build ]; then
+              sudo mv /tmp/nextjs-build/* /var/www/nextjs-app/
+            else
+              echo "Build directory not found"
+              exit 1
+            fi
+            
             cd /var/www/nextjs-app
+            
+            # Ensure npm is installed
+            if ! command -v npm &> /dev/null; then
+              echo "npm could not be found. Please install Node.js and npm."
+              exit 1
+            fi
 
-            # Install dependencies and start or restart the app with PM2
+            # Install dependencies if needed and start the app using npm
             npm install
-            pm2 restart app || pm2 start npm --name "app" -- start
-          EOF
+            pkill -f "next start" || true  # Stop any existing Next.js app
+            nohup npm start &  # Start the Next.js app in the background
+            EOF
