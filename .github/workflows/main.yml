@@ -41,6 +41,9 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
+          # Create target directory if it doesn't exist
+          ssh -o StrictHostKeyChecking=no $USER@$HOST "mkdir -p /var/www/nextjs-app"
+
           # Copy built files to EC2
           scp -o StrictHostKeyChecking=no -r .next $USER@$HOST:/var/www/nextjs-app
 
@@ -50,3 +53,4 @@ jobs:
             npm install  # Install any server-side dependencies
             pm2 restart app || pm2 start npm --name "app" -- start  # Start or restart with PM2
           EOF
+
