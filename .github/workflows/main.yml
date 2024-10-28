@@ -3,6 +3,8 @@ name: Deploy to EC2
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   deploy:
@@ -29,18 +31,27 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
-        
-    - name: Create SSH directory
-      run: mkdir -p ~/.ssh
-        
-    - name: Store SSH key
+
+    # Debug SSH key
+    - name: Debug SSH key
       run: |
-        echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
-        chmod 600 ~/.ssh/ec2_key.pem
+        echo "Length of SSH key secret: ${#SSH_KEY}"
+        echo "First few characters of SSH key (sanitized):"
+        echo "${{ secrets.EC2_SSH_KEY }}" | head -n 1
+      env:
+        SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         
-    - name: Add EC2 host to known hosts
+    - name: Setup SSH
       run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
         ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+        
+    # Test SSH connection
+    - name: Test SSH Connection
+      run: |
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} 'echo "SSH connection successful"'
 
     - name: Setup EC2 Prerequisites
       uses: appleboy/ssh-action@master
@@ -48,11 +59,13 @@ jobs:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
+        debug: true  # Enable debug mode
+        command_timeout: "30m"  # Increase timeout
         script: |
           # Update package list
           sudo apt-get update
 
-          # Install curl if not present (needed for Node.js installation)
+          # Install curl if not present
           which curl || sudo apt-get install -y curl
 
           # Check if Node.js is installed, if not install it
@@ -71,16 +84,13 @@ jobs:
             sudo npm install -g pm2
           fi
 
-          # Ensure PM2 starts on system boot
-          pm2 startup | tail -n 1 | sudo bash
-
           # Create application directory if it doesn't exist
           mkdir -p /home/${{ secrets.EC2_USERNAME }}/app
         
     - name: Deploy to EC2
       run: |
         rsync -avz --delete \
-          -e "ssh -i ~/.ssh/ec2_key.pem" \
+          -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
           .next package.json package-lock.json public next.config.js \
           ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USERNAME }}/app/
           
@@ -90,12 +100,8 @@ jobs:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
+        debug: true  # Enable debug mode
         script: |
           cd /home/${{ secrets.EC2_USERNAME }}/app
           npm ci --production
-          # Save PM2 process list before restart
-          pm2 save
-          # Start or restart the application
           pm2 restart next-app || pm2 start npm --name "next-app" -- start
-          # Save PM2 process list again after changes
-          pm2 save
