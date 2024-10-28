@@ -3,22 +3,32 @@
 # Directory where the app will be stored on EC2
 REMOTE_APP_DIR="~/app"
 
+# Initial system update
+echo "Updating the system before Node.js installation..."
+sudo apt-get update -y && sudo apt-get upgrade -y
+
 # Check for Node.js installation, install if not present
 echo "Checking for Node.js..."
 if ! command -v node &> /dev/null; then
   echo "Node.js not found. Installing..."
   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
   sudo apt-get install -y nodejs
+  # Add npm global bin to PATH in current session
+  export PATH=$PATH:$(npm bin -g)
 else
   echo "Node.js found: $(node --version)"
 fi
+
+# System update after installing Node.js
+echo "Updating the system after Node.js installation..."
+sudo apt-get update -y && sudo apt-get upgrade -y
 
 # Check for PM2 installation, install if not present
 echo "Checking for PM2..."
 if ! command -v pm2 &> /dev/null; then
   echo "PM2 not found. Installing..."
   sudo npm install -g pm2
-  export PATH=$PATH:$(npm bin -g) # Update PATH for current session
+  export PATH=$PATH:$(npm bin -g) # Ensure PM2 is available in PATH
 else
   echo "PM2 found: $(pm2 --version)"
 fi
@@ -38,7 +48,11 @@ ssh -i ~/.ssh/id_rsa $EC2_USERNAME@$EC2_HOST << EOF
     mkdir -p $REMOTE_APP_DIR
   fi
 
+  # Navigate to application directory
   cd $REMOTE_APP_DIR
+
+  # Re-export PATH for npm and pm2 to make sure they are accessible
+  export PATH=$PATH:$(npm bin -g)
 
   # Install dependencies
   echo "Installing dependencies..."
