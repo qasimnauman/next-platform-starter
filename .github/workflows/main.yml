@@ -11,97 +11,123 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+    # Step 1: Get the code
     - uses: actions/checkout@v3
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-        cache: 'npm'
-        
-    - name: Install dependencies
-      run: npm ci
-        
-    - name: Build application
-      run: npm run build
-        
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
 
-    # Debug SSH key
-    - name: Debug SSH key
-      run: |
-        echo "Length of SSH key secret: ${#SSH_KEY}"
-        echo "First few characters of SSH key (sanitized):"
-        echo "${{ secrets.EC2_SSH_KEY }}" | head -n 1
-      env:
-        SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-        
+    # Step 2: Setup and verify SSH connection
     - name: Setup SSH
       run: |
         mkdir -p ~/.ssh
         echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
-        chmod 400 ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
         ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-        
-    # Test SSH connection
+
     - name: Test SSH Connection
       run: |
-        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} 'echo "SSH connection successful"'
+        ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} 'echo "SSH connection successful"'
 
-    - name: Setup EC2 Prerequisites
+    # Step 3: Check and install prerequisites
+    - name: Setup Prerequisites
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
-        debug: true  # Enable debug mode
-        command_timeout: "30m"  # Increase timeout
         script: |
           # Update package list
           sudo apt-get update
-
-          # Install curl if not present
-          which curl || sudo apt-get install -y curl
-
-          # Check if Node.js is installed, if not install it
+          
+          # Check Node.js installation
           if ! command -v node &> /dev/null; then
             echo "Installing Node.js..."
             curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
             sudo apt-get install -y nodejs
           fi
-
-          # Check Node.js version
-          node --version
-
-          # Install PM2 globally if not installed
+          echo "Node.js version: $(node --version)"
+          
+          # Check npm installation
+          echo "npm version: $(npm --version)"
+          
+          # Check/Install PM2
           if ! command -v pm2 &> /dev/null; then
             echo "Installing PM2..."
             sudo npm install -g pm2
           fi
+          echo "PM2 version: $(pm2 --version)"
+          
+          # Create app directory if it doesn't exist
+          mkdir -p ~/app
 
-          # Create application directory if it doesn't exist
-          mkdir -p /home/${{ secrets.EC2_USERNAME }}/app
-        
+    # Step 4: Deploy code to EC2
     - name: Deploy to EC2
       run: |
         rsync -avz --delete \
-          -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
-          .next package.json package-lock.json public next.config.js \
-          ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USERNAME }}/app/
+          -e "ssh -i ~/.ssh/id_rsa" \
+          ./ ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/app/
+
+    # Step 5: Install dependencies and build
+    - name: Install Dependencies and Build
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          cd ~/app
           
+          # Clean install dependencies
+          echo "Installing dependencies..."
+          npm ci
+          
+          # Build the application
+          echo "Building the application..."
+          npm run build
+          
+          # Verify build success
+          if [ -d ".next" ]; then
+            echo "Build successful!"
+          else
+            echo "Build failed!"
+            exit 1
+          fi
+
+    # Step 6: Start/Restart the application
     - name: Start Application
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USERNAME }}
         key: ${{ secrets.EC2_SSH_KEY }}
-        debug: true  # Enable debug mode
         script: |
-          cd /home/${{ secrets.EC2_USERNAME }}/app
-          npm ci --production
-          pm2 restart next-app || pm2 start npm --name "next-app" -- start
+          cd ~/app
+          
+          # Check if app is already running in PM2
+          if pm2 list | grep -q "next-app"; then
+            echo "Restarting next-app..."
+            pm2 restart next-app
+          else
+            echo "Starting next-app..."
+            pm2 start npm --name "next-app" -- start
+          fi
+          
+          # Save PM2 process list
+          pm2 save
+          
+          # Show running processes
+          pm2 list
+
+    # Step 7: Verify deployment
+    - name: Verify Deployment
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          # Check if the application is running
+          if curl -f http://localhost:3000 &>/dev/null; then
+            echo "Application is running successfully!"
+          else
+            echo "Application is not responding!"
+            exit 1
+          fi
