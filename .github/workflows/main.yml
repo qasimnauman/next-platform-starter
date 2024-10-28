@@ -1,72 +1,101 @@
-name: Deploy Next.js to EC2
+name: Deploy to EC2
 
 on:
   push:
-    branches:
-      - main  # Run workflow on push to the main branch
+    branches: [ "main" ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+        
+    - name: Build application
+      run: npm run build
+        
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+        
+    - name: Create SSH directory
+      run: mkdir -p ~/.ssh
+        
+    - name: Store SSH key
+      run: |
+        echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
+        chmod 600 ~/.ssh/ec2_key.pem
+        
+    - name: Add EC2 host to known hosts
+      run: |
+        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'  # Specify the Node.js version used in your Next.js app
+    - name: Setup EC2 Prerequisites
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          # Update package list
+          sudo apt-get update
 
-      - name: Install dependencies
-        run: npm install
+          # Install curl if not present (needed for Node.js installation)
+          which curl || sudo apt-get install -y curl
 
-      - name: Build Next.js application
-        run: npm run build
+          # Check if Node.js is installed, if not install it
+          if ! command -v node &> /dev/null; then
+            echo "Installing Node.js..."
+            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+          fi
 
-      - name: Deploy to EC2
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          HOST: ${{ secrets.EC2_HOST }}
-          USER: ${{ secrets.EC2_USER }}
-        run: |
-          # Configure SSH
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
+          # Check Node.js version
+          node --version
 
-          # Prepare application directory on EC2
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
-            sudo apt update
-            sudo mkdir -p /var/www/nextjs-app
-            sudo chown -R $USER:$USER /var/www/nextjs-app
-            sudo chmod -R 755 /var/www/nextjs-app
-          EOF
+          # Install PM2 globally if not installed
+          if ! command -v pm2 &> /dev/null; then
+            echo "Installing PM2..."
+            sudo npm install -g pm2
+          fi
 
-          # Copy build files to EC2's /tmp directory
-          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r .next $USER@$HOST:/tmp/nextjs-build
+          # Ensure PM2 starts on system boot
+          pm2 startup | tail -n 1 | sudo bash
 
-          # Move build files from /tmp to the target directory and restart the app
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no $USER@$HOST << 'EOF'
-            # Check if the build directory exists
-            if [ -d /tmp/nextjs-build ]; then
-              sudo mv /tmp/nextjs-build/* /var/www/nextjs-app/
-            else
-              echo "Build directory not found"
-              exit 1
-            fi
-            
-            cd /var/www/nextjs-app
-            
-            # Ensure npm is installed
-            if ! command -v npm &> /dev/null; then
-              echo "npm could not be found. Please install Node.js and npm."
-              exit 1
-            fi
-
-            # Install dependencies if needed and start the app using npm
-            npm install
-            pkill -f "next start" || true  # Stop any existing Next.js app
-            nohup npm start &  # Start the Next.js app in the background
-          EOF
+          # Create application directory if it doesn't exist
+          mkdir -p /home/${{ secrets.EC2_USERNAME }}/app
+        
+    - name: Deploy to EC2
+      run: |
+        rsync -avz --delete \
+          -e "ssh -i ~/.ssh/ec2_key.pem" \
+          .next package.json package-lock.json public next.config.js \
+          ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USERNAME }}/app/
+          
+    - name: Start Application
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          cd /home/${{ secrets.EC2_USERNAME }}/app
+          npm ci --production
+          # Save PM2 process list before restart
+          pm2 save
+          # Start or restart the application
+          pm2 restart next-app || pm2 start npm --name "next-app" -- start
+          # Save PM2 process list again after changes
+          pm2 save
