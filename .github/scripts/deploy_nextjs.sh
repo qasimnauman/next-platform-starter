@@ -3,7 +3,7 @@
 # Directory where the app will be stored on EC2
 REMOTE_APP_DIR="~/app"
 
-# Step 1: Ensure Node.js is installed
+# Check for Node.js installation, install if not present
 echo "Checking for Node.js..."
 if ! command -v node &> /dev/null; then
   echo "Node.js not found. Installing..."
@@ -13,28 +13,38 @@ else
   echo "Node.js found: $(node --version)"
 fi
 
-# Step 2: Ensure PM2 is installed
+# Check for PM2 installation, install if not present
 echo "Checking for PM2..."
 if ! command -v pm2 &> /dev/null; then
   echo "PM2 not found. Installing..."
   sudo npm install -g pm2
+  export PATH=$PATH:$(npm bin -g) # Update PATH for current session
 else
   echo "PM2 found: $(pm2 --version)"
 fi
 
-# Step 3: Sync code from GitHub Actions runner to EC2
+# Sync code to the EC2 instance
 echo "Syncing code to EC2 instance..."
 rsync -avz --delete -e "ssh -i ~/.ssh/id_rsa" . $EC2_USERNAME@$EC2_HOST:$REMOTE_APP_DIR
 
-# Step 4: SSH into the instance to install dependencies and start the app
+# SSH into the instance to handle the directory and deploy
 ssh -i ~/.ssh/id_rsa $EC2_USERNAME@$EC2_HOST << EOF
+  # Ensure the application directory exists or create it if missing
+  if [ -d "$REMOTE_APP_DIR" ]; then
+    echo "Directory $REMOTE_APP_DIR exists. Clearing old files..."
+    rm -rf $REMOTE_APP_DIR/*
+  else
+    echo "Directory $REMOTE_APP_DIR does not exist. Creating..."
+    mkdir -p $REMOTE_APP_DIR
+  fi
+
   cd $REMOTE_APP_DIR
 
-  # Step 5: Install dependencies
+  # Install dependencies
   echo "Installing dependencies..."
   npm install
 
-  # Step 6: Start or restart the application using PM2
+  # Start or restart the application using PM2
   if pm2 list | grep -q "next-app"; then
     echo "Restarting the application with PM2..."
     pm2 restart next-app
@@ -43,7 +53,7 @@ ssh -i ~/.ssh/id_rsa $EC2_USERNAME@$EC2_HOST << EOF
     pm2 start npm --name "next-app" -- start
   fi
 
-  # Save the PM2 process list for restarts on system reboot
+  # Save PM2 process list for automatic startup on system reboot
   pm2 save
 EOF
 
